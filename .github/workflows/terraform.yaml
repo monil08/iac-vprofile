@@ -7,15 +7,15 @@ on:
       - main
       - stage
 
-    paths:
-      - terraform/**
+    # paths:
+    #   - terraform/**
 
   pull_request:
     branches:
       - main
 
-    paths: 
-      - terraform/**
+    # paths: 
+    #   - terraform/**
 
 env:
  # Credentials for deployment to AWS
