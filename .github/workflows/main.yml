@@ -1,0 +1,86 @@
+name: "GitOps-Workflow"
+
+on:
+  push:
+    branches:
+      - main
+      - stage
+
+  pull_request:
+    branches:
+      - main
+
+env:
+  AWS_REGION: eu-north-1
+  EKS_CLUSTER: vprofile-eks
+
+jobs:
+  terraform:
+    name: "Apply terraform code changes"
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./terraform
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.6
+
+      - name: Terraform init
+        id: init
+        run: terraform init -backend-config="bucket=${{ secrets.BUCKET_TF_STATE }}"
+        env:
+          TF_IN_AUTOMATION: true
+
+      - name: Terraform format
+        id: format
+        run: terraform fmt -check
+        env:
+          TF_IN_AUTOMATION: true
+
+      - name: Terraform validate
+        id: validate
+        run: terraform validate
+        env:
+          TF_IN_AUTOMATION: true
+
+      - name: Terraform plan
+        id: plan
+        run: terraform plan -input=false -out=planfile
+        continue-on-error: true
+        env:
+          TF_IN_AUTOMATION: true
+
+      - name: Terraform plan status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+      - name: Terraform Apply
+        id: apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -auto-approve -input=false -parallelism=1 planfile
+        env:
+          TF_IN_AUTOMATION: true
+
+      - name: Get Kubeconfig for EKS
+        id: getconfig
+        if: steps.apply.outcome == 'success'
+        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
+
+      - name: Install Ingress Controller
+        if: steps.getconfig.outcome == 'success'
+        run: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.1.3/deploy/static/provider/aws/deploy.yaml
